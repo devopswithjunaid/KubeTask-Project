@@ -1,0 +1,266 @@
+# Horizontal Pod Autoscaler for Backend
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kubetask-backend-hpa
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: backend-hpa
+    platform: gcp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kubetask-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+---
+# Horizontal Pod Autoscaler for Frontend
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kubetask-frontend-hpa
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: frontend-hpa
+    platform: gcp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kubetask-frontend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      selectPolicy: Max
+---
+# ServiceMonitor for Prometheus (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubetask-backend-monitor
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: monitoring
+    platform: gcp
+spec:
+  selector:
+    matchLabels:
+      app: kubetask
+      component: backend
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kubetask-frontend-monitor
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: monitoring
+    platform: gcp
+spec:
+  selector:
+    matchLabels:
+      app: kubetask
+      component: frontend
+  endpoints:
+  - port: http
+    path: /nginx-health
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# Vertical Pod Autoscaler (VPA) for better resource recommendations
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: kubetask-backend-vpa
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: backend-vpa
+    platform: gcp
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kubetask-backend
+  updatePolicy:
+    updateMode: "Off"  # Only provide recommendations, don't auto-update
+  resourcePolicy:
+    containerPolicies:
+    - containerName: backend
+      minAllowed:
+        cpu: 100m
+        memory: 128Mi
+      maxAllowed:
+        cpu: 1000m
+        memory: 1Gi
+      controlledResources: ["cpu", "memory"]
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: kubetask-frontend-vpa
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: frontend-vpa
+    platform: gcp
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kubetask-frontend
+  updatePolicy:
+    updateMode: "Off"  # Only provide recommendations, don't auto-update
+  resourcePolicy:
+    containerPolicies:
+    - containerName: frontend
+      minAllowed:
+        cpu: 50m
+        memory: 64Mi
+      maxAllowed:
+        cpu: 500m
+        memory: 512Mi
+      controlledResources: ["cpu", "memory"]
+---
+# PodMonitor for additional monitoring (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: kubetask-pods-monitor
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: pod-monitoring
+    platform: gcp
+spec:
+  selector:
+    matchLabels:
+      app: kubetask
+  podMetricsEndpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+---
+# PrometheusRule for alerting (if using Prometheus Operator)
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubetask-alerts
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: alerts
+    platform: gcp
+spec:
+  groups:
+  - name: kubetask.rules
+    rules:
+    - alert: KubeTaskBackendDown
+      expr: up{job="kubetask-backend"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "KubeTask backend is down"
+        description: "KubeTask backend has been down for more than 5 minutes."
+    
+    - alert: KubeTaskFrontendDown
+      expr: up{job="kubetask-frontend"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "KubeTask frontend is down"
+        description: "KubeTask frontend has been down for more than 5 minutes."
+    
+    - alert: KubeTaskHighCPU
+      expr: rate(container_cpu_usage_seconds_total{pod=~"kubetask-.*"}[5m]) > 0.8
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CPU usage in KubeTask pods"
+        description: "CPU usage is above 80% for more than 10 minutes."
+    
+    - alert: KubeTaskHighMemory
+      expr: container_memory_usage_bytes{pod=~"kubetask-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High memory usage in KubeTask pods"
+        description: "Memory usage is above 90% for more than 10 minutes."
+    
+    - alert: KubeTaskPodCrashLooping
+      expr: rate(kube_pod_container_status_restarts_total{pod=~"kubetask-.*"}[15m]) > 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "KubeTask pod is crash looping"
+        description: "Pod {{ $labels.pod }} is crash looping."

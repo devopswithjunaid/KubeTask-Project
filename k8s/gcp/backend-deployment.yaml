@@ -1,0 +1,260 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubetask-backend
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: backend
+    version: v1.0.0
+    platform: gcp
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: kubetask
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: kubetask
+        component: backend
+        version: v1.0.0
+        platform: gcp
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: kubetask-backend-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: backend
+        # Update this with your Google Container Registry or Artifact Registry image
+        image: abraiz/backend:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        env:
+        # Database Configuration
+        - name: POSTGRES_SERVER
+          value: "postgres"
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kubetask-database-secret
+              key: POSTGRES_PASSWORD
+        
+        # Other Configuration
+        - name: PYTHONPATH
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: PYTHONPATH
+        - name: PYTHONUNBUFFERED
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: PYTHONUNBUFFERED
+        - name: PROJECT_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: PROJECT_NAME
+        - name: VERSION
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: VERSION
+        - name: API_V1_STR
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: API_V1_STR
+        - name: CORS_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: CORS_ORIGINS
+        - name: ACCESS_TOKEN_EXPIRE_MINUTES
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: ACCESS_TOKEN_EXPIRE_MINUTES
+        
+        # Database configuration from secrets
+        - name: POSTGRES_SERVER
+          value: "postgres"  # Internal postgres service
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: kubetask-database-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: kubetask-database-secret
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: kubetask-database-secret
+              key: POSTGRES_DB
+        
+        # Redis configuration
+        - name: REDIS_HOST
+          value: "redis"  # Use Redis service
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: kubetask-config
+              key: REDIS_PORT
+        
+        # JWT Secret
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: kubetask-app-secret
+              key: SECRET_KEY
+        
+        # Google Cloud specific environment variables
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: "/var/secrets/google/key.json"
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # Resource limits
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        
+        # Volume mounts
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: app-tmp
+          mountPath: /app/tmp
+        - name: google-cloud-key
+          mountPath: /var/secrets/google
+          readOnly: true
+      
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: app-tmp
+        emptyDir: {}
+      - name: google-cloud-key
+        secret:
+          secretName: gcp-service-account-key
+      
+      # Pod anti-affinity for high availability
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - kubetask
+                - key: component
+                  operator: In
+                  values:
+                  - backend
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubetask-backend
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: backend
+    platform: gcp
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: http
+    protocol: TCP
+  selector:
+    app: kubetask
+    component: backend
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubetask-backend-sa
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: backend
+    platform: gcp
+  annotations:
+    # Workload Identity annotation (if using Workload Identity)
+    iam.gke.io/gcp-service-account: kubetask-secrets-sa@n8n-workflow-461719.iam.gserviceaccount.com
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kubetask-backend-pdb
+  namespace: kubetask
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: kubetask
+      component: backend

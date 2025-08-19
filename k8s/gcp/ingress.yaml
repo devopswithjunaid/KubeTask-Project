@@ -1,0 +1,151 @@
+# Ingress for Cloudflare Proxied SSL Setup
+# No GCP-managed certificates needed since Cloudflare handles SSL termination
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubetask-ingress
+  namespace: kubetask
+  labels:
+    app: kubetask
+    platform: gcp
+  annotations:
+    # GCP Load Balancer annotations
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "kubetask-production-static-ip"
+    kubernetes.io/ingress.allow-http: "true"  # Allow HTTP since Cloudflare handles HTTPS
+    
+    # Backend configuration
+    cloud.google.com/backend-config: '{"default": "kubetask-backend-config"}'
+    
+    # Load balancer type
+    cloud.google.com/load-balancer-type: "External"
+spec:
+  rules:
+  - host: kubetask.volo.pk
+    http:
+      paths:
+      # API routes to backend
+      - path: /api/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: kubetask-backend
+            port:
+              number: 8000
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: kubetask-backend
+            port:
+              number: 8000
+      - path: /docs
+        pathType: Prefix
+        backend:
+          service:
+            name: kubetask-backend
+            port:
+              number: 8000
+      - path: /metrics
+        pathType: Exact
+        backend:
+          service:
+            name: kubetask-backend
+            port:
+              number: 8000
+      # Frontend routes (catch-all)
+      - path: /*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: kubetask-frontend
+            port:
+              number: 80
+---
+# Backend Configuration for health checks and other settings
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: kubetask-backend-config
+  namespace: kubetask
+  labels:
+    app: kubetask
+    platform: gcp
+spec:
+  # Health check configuration
+  healthCheck:
+    checkIntervalSec: 30
+    timeoutSec: 5
+    healthyThreshold: 2
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /health
+    port: 8000
+  
+  # Session affinity
+  sessionAffinity:
+    affinityType: "CLIENT_IP"
+    affinityCookieTtlSec: 3600
+  
+  # Connection draining timeout
+  connectionDraining:
+    drainingTimeoutSec: 60
+  
+  # Timeout settings
+  timeoutSec: 30
+---
+# Frontend Backend Configuration
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: kubetask-frontend-config
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: frontend
+    platform: gcp
+spec:
+  # Health check configuration for frontend
+  healthCheck:
+    checkIntervalSec: 30
+    timeoutSec: 5
+    healthyThreshold: 2
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /nginx-health
+    port: 80
+  
+  # Connection draining timeout
+  connectionDraining:
+    drainingTimeoutSec: 60
+  
+  # Timeout settings
+  timeoutSec: 30
+---
+# Network Policy for ingress traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubetask-ingress-policy
+  namespace: kubetask
+  labels:
+    app: kubetask
+    platform: gcp
+spec:
+  podSelector:
+    matchLabels:
+      app: kubetask
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from GCP Load Balancer
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 8000
+  egress:
+  # Allow all egress traffic
+  - {}

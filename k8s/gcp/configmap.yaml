@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubetask-config
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: config
+    platform: gcp
+data:
+  # Frontend Configuration - Updated for volo.pk
+  VITE_API_URL: "https://kubetask.volo.pk/api"
+  VITE_PORT: "3000"
+  NODE_ENV: "production"
+  
+  # Backend Configuration
+  PYTHONPATH: "/app"
+  PYTHONUNBUFFERED: "1"
+  
+  # Database Configuration (non-sensitive)
+  POSTGRES_DB: "kubetask"
+  POSTGRES_USER: "kubetask"
+  
+  # Redis Configuration (non-sensitive)
+  REDIS_PORT: "6379"
+  
+  # Application Configuration
+  PROJECT_NAME: "KubeTask"
+  VERSION: "1.0.0"
+  API_V1_STR: "/api/v1"
+  
+  # CORS Configuration - Updated for volo.pk
+  CORS_ORIGINS: "https://kubetask.volo.pk,https://volo.pk,http://localhost:3000"
+  
+  # JWT Configuration
+  ACCESS_TOKEN_EXPIRE_MINUTES: "1440"  # 24 hours
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubetask-nginx-config
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: nginx
+    platform: gcp
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    
+    http {
+        include       /etc/nginx/mime.types;
+        default_type  application/octet-stream;
+        
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+        
+        access_log /var/log/nginx/access.log main;
+        error_log /var/log/nginx/error.log warn;
+        
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_types
+            text/plain
+            text/css
+            text/xml
+            text/javascript
+            application/json
+            application/javascript
+            application/xml+rss
+            application/atom+xml
+            image/svg+xml;
+        
+        upstream backend {
+            server kubetask-backend:8000;
+        }
+        
+        server {
+            listen 80;
+            server_name _;
+            root /usr/share/nginx/html;
+            index index.html;
+            
+            # Security headers
+            add_header X-Frame-Options "SAMEORIGIN" always;
+            add_header X-XSS-Protection "1; mode=block" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header Referrer-Policy "no-referrer-when-downgrade" always;
+            add_header Content-Security-Policy "default-src 'self' http: https: data: blob: 'unsafe-inline'" always;
+            
+            # API routes
+            location /api/ {
+                proxy_pass http://backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_connect_timeout 30s;
+                proxy_send_timeout 30s;
+                proxy_read_timeout 30s;
+            }
+            
+            # Health check for backend
+            location /health {
+                proxy_pass http://backend/health;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+            
+            # API documentation
+            location /docs {
+                proxy_pass http://backend/docs;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+            
+            # Frontend routes
+            location / {
+                try_files $uri $uri/ /index.html;
+                expires 1h;
+                add_header Cache-Control "public, immutable";
+            }
+            
+            # Static assets
+            location /static/ {
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+            
+            # Health check endpoint
+            location /nginx-health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+        }
+    }

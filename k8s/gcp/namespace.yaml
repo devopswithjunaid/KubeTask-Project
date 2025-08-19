@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubetask
+  labels:
+    name: kubetask
+    environment: production
+    platform: gcp
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubetask-system
+  labels:
+    name: kubetask-system
+    environment: production
+    platform: gcp

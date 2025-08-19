@@ -1,0 +1,146 @@
+# Redis deployment for GCP
+# Note: For production, consider using Google Cloud Memorystore for Redis
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: redis
+    platform: gcp
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: standard-rwo  # GCP persistent disk
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: redis
+    platform: gcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubetask
+      component: redis
+  template:
+    metadata:
+      labels:
+        app: kubetask
+        component: redis
+        platform: gcp
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        command:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --save
+        - "900 1"
+        - --save
+        - "300 10"
+        - --save
+        - "60 10000"
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 999
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+      volumes:
+      - name: redis-storage
+        persistentVolumeClaim:
+          claimName: redis-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: redis
+    platform: gcp
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: kubetask
+    component: redis
+---
+# Redis configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: kubetask
+  labels:
+    app: kubetask
+    component: redis
+    platform: gcp
+data:
+  redis.conf: |
+    # Redis configuration for production
+    bind 0.0.0.0
+    port 6379
+    
+    # Persistence
+    save 900 1
+    save 300 10
+    save 60 10000
+    
+    # AOF
+    appendonly yes
+    appendfsync everysec
+    
+    # Memory management
+    maxmemory-policy allkeys-lru
+    
+    # Security
+    protected-mode yes
+    
+    # Logging
+    loglevel notice
+    
+    # Performance
+    tcp-keepalive 300
+    timeout 0
