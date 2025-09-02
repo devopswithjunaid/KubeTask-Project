@@ -7,29 +7,28 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
+    
     steps:
       # 1. Repo checkout
       - name: Checkout repository
         uses: actions/checkout@v3
-
+      
       # 2. Print secret (just for test, NEVER do this in real prod)
       - name: Test Secret Access
         env:
           TOKEN: ${{ secrets.TOKEN }}
-        run: echo "Token is set and length is: ${#TOKEN}"
-
+        run: echo "Token is set and length is ${#TOKEN}"
+      
       # 3. Install kubeval for YAML validation
       - name: Install kubeval
         run: |
-          curl -sSL https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz \
-          | tar xz
+          curl -sSL https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz | tar xz
           sudo mv kubeval /usr/local/bin/
-
+      
       # 4. Validate Kubernetes manifests
       - name: Validate Kubernetes YAMLs
         run: kubeval *.yaml || true
-
+      
       # 5. Dummy deploy step (sirf practice ke liye)
       - name: Fake Deploy
         env:
