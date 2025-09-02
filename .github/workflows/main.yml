@@ -1,0 +1,37 @@
+name: CI/CD Pipeline for KubeTask
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Repo checkout
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2. Print secret (just for test, NEVER do this in real prod)
+      - name: Test Secret Access
+        run: echo "Token is set and length is: ${#TOKEN}"
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
+
+      # 3. Install kubeval for YAML validation
+      - name: Install kubeval
+        run: |
+          curl -sSL https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz \
+          | tar xz
+          sudo mv kubeval /usr/local/bin/
+
+      # 4. Validate Kubernetes manifests
+      - name: Validate Kubernetes YAMLs
+        run: kubeval *.yaml || true
+
+      # 5. Dummy deploy step (sirf practice ke liye)
+      - name: Fake Deploy
+        run: echo "Deployment simulated with TOKEN=${TOKEN}"
+        env:
+          TOKEN: ${{ secrets.TOKEN }}
