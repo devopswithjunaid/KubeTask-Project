@@ -15,9 +15,9 @@ jobs:
 
       # 2. Print secret (just for test, NEVER do this in real prod)
       - name: Test Secret Access
-        run: echo "Token is set and length is: ${#TOKEN}"
         env:
           TOKEN: ${{ secrets.TOKEN }}
+        run: echo "Token is set and length is: ${#TOKEN}"
 
       # 3. Install kubeval for YAML validation
       - name: Install kubeval
@@ -32,6 +32,6 @@ jobs:
 
       # 5. Dummy deploy step (sirf practice ke liye)
       - name: Fake Deploy
-        run: echo "Deployment simulated with TOKEN=${TOKEN}"
         env:
           TOKEN: ${{ secrets.TOKEN }}
+        run: echo "Deployment simulated with TOKEN=${TOKEN}"
