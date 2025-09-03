@@ -1,36 +1,58 @@
-name: CI/CD Pipeline for KubeTask
+name: CI Pipeline
 
 on:
   push:
+    branches: [ master ]
   pull_request:
+    branches: [ master ]
 
 jobs:
-  build-and-deploy:
+  build-and-test:
     runs-on: ubuntu-latest
-    
+
     steps:
-      # 1. Repo checkout
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      
-      # 2. Print secret (just for test, NEVER do this in real prod)
-      - name: Test Secret Access
-        env:
-          TOKEN: ${{ secrets.TOKEN }}
-        run: echo "Token is set and length is ${#TOKEN}"
-      
-      # 3. Install kubeval for YAML validation
-      - name: Install kubeval
-        run: |
-          curl -sSL https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz | tar xz
-          sudo mv kubeval /usr/local/bin/
-      
-      # 4. Validate Kubernetes manifests
-      - name: Validate Kubernetes YAMLs
-        run: kubeval *.yaml || true
-      
-      # 5. Dummy deploy step (sirf practice ke liye)
-      - name: Fake Deploy
-        env:
-          TOKEN: ${{ secrets.TOKEN }}
-        run: echo "Deployment simulated with TOKEN=${TOKEN}"
+    # Code checkout
+    - name: Check out code
+      uses: actions/checkout@v3
+
+    # ---- Frontend ----
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '16'
+
+    - name: Install frontend dependencies
+      run: npm install
+      working-directory: ./frontend
+
+    - name: Run frontend tests
+      run: npm test
+      working-directory: ./frontend
+
+    # ---- Backend ----
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+
+    - name: Install backend dependencies
+      run: ./mvnw install
+      working-directory: ./backend
+
+    - name: Run backend tests
+      run: ./mvnw test
+      working-directory: ./backend
+
+    # ---- Docker Build & Push ----
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+    - name: Build Docker image
+      run: docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/kubetask:latest .
+
+    - name: Push Docker image
+      run: docker push ${{ secrets.DOCKER_HUB_USERNAME }}/kubetask:latest
