@@ -107,8 +107,11 @@ jobs:
     
     - name: Build Docker image
       if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
-      run: docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/kubetask:latest .
+      run: |
+        docker build -t devopswithjunaid/junaid:latest -t devopswithjunaid/junaid:${{ github.sha }} .
     
     - name: Push Docker image
       if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
-      run: docker push ${{ secrets.DOCKER_HUB_USERNAME }}/kubetask:latest
+      run: |
+        docker push devopswithjunaid/junaid:latest
+        docker push devopswithjunaid/junaid:${{ github.sha }}
