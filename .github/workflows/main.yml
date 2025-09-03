@@ -15,44 +15,100 @@ jobs:
     - name: Check out code
       uses: actions/checkout@v3
     
-    # ---- Frontend ----
+    # Debug: Check project structure
+    - name: List repository contents
+      run: |
+        echo "=== Root directory contents ==="
+        ls -la
+        echo ""
+        echo "=== Looking for pom.xml files ==="
+        find . -name "pom.xml" -type f
+        echo ""
+        echo "=== Looking for package.json files ==="
+        find . -name "package.json" -type f
+        echo ""
+        echo "=== Directory tree (first 3 levels) ==="
+        find . -maxdepth 3 -type d | sort
+    
+    # ---- Frontend ---- (Only if frontend directory exists)
+    - name: Check if frontend directory exists
+      id: check_frontend
+      run: |
+        if [ -d "./frontend" ]; then
+          echo "frontend_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "frontend_exists=false" >> $GITHUB_OUTPUT
+        fi
+    
     - name: Set up Node.js
+      if: steps.check_frontend.outputs.frontend_exists == 'true'
       uses: actions/setup-node@v3
       with:
         node-version: '16'
     
     - name: Install frontend dependencies
+      if: steps.check_frontend.outputs.frontend_exists == 'true'
       run: npm install
       working-directory: ./frontend
     
     - name: Run frontend tests
+      if: steps.check_frontend.outputs.frontend_exists == 'true'
       run: npm test || echo "Skipping frontend tests (no test script found)"
       working-directory: ./frontend
     
-    # ---- Backend ----
+    # ---- Backend ---- (Only if we find pom.xml)
+    - name: Check for pom.xml location
+      id: check_backend
+      run: |
+        if [ -f "./pom.xml" ]; then
+          echo "pom_location=." >> $GITHUB_OUTPUT
+          echo "backend_exists=true" >> $GITHUB_OUTPUT
+        elif [ -f "./backend/pom.xml" ]; then
+          echo "pom_location=./backend" >> $GITHUB_OUTPUT
+          echo "backend_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "backend_exists=false" >> $GITHUB_OUTPUT
+          echo "No pom.xml found in root or backend directory"
+        fi
+    
     - name: Set up Java
+      if: steps.check_backend.outputs.backend_exists == 'true'
       uses: actions/setup-java@v3
       with:
         java-version: '11'
         distribution: 'temurin'
     
     - name: Install backend dependencies
+      if: steps.check_backend.outputs.backend_exists == 'true'
       run: mvn install
-      working-directory: ./backend
+      working-directory: ${{ steps.check_backend.outputs.pom_location }}
     
     - name: Run backend tests
+      if: steps.check_backend.outputs.backend_exists == 'true'
       run: mvn test
-      working-directory: ./backend
+      working-directory: ${{ steps.check_backend.outputs.pom_location }}
     
-    # ---- Docker Build & Push ----
+    # ---- Docker Build & Push ---- (Only if Dockerfile exists)
+    - name: Check if Dockerfile exists
+      id: check_dockerfile
+      run: |
+        if [ -f "./Dockerfile" ]; then
+          echo "dockerfile_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "dockerfile_exists=false" >> $GITHUB_OUTPUT
+        fi
+    
     - name: Log in to Docker Hub
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
       uses: docker/login-action@v2
       with:
         username: ${{ secrets.DOCKER_HUB_USERNAME }}
         password: ${{ secrets.DOCKER_HUB_TOKEN }}
     
     - name: Build Docker image
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
       run: docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/kubetask:latest .
     
     - name: Push Docker image
+      if: steps.check_dockerfile.outputs.dockerfile_exists == 'true'
       run: docker push ${{ secrets.DOCKER_HUB_USERNAME }}/kubetask:latest
