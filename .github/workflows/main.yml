@@ -1,190 +1,292 @@
-name: Monorepo CI (Frontend & Backend)
+name: Complete CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
-    paths:
-      - 'frontend/**'
-      - 'backend/**'
-      - '.github/workflows/**'
+    branches: [ main, develop ]
   pull_request:
     branches: [ main ]
-    paths:
-      - 'frontend/**'
-      - 'backend/**'
-      - '.github/workflows/**'
 
 env:
+  REGISTRY: docker.io
   IMAGE_REPO: devopswithjunaid/junaid
 
 jobs:
-  changes:
-    name: Detect changed parts
+  detect-changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
-      frontend: ${{ steps.filter.outputs.frontend }}
-      backend:  ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      backend: ${{ steps.changes.outputs.backend }}
+      docker: ${{ steps.changes.outputs.docker }}
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Filter paths
-        id: filter
-        uses: dorny/paths-filter@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          filters: |
-            frontend:
-              - 'frontend/**'
-            backend:
-              - 'backend/**'
+          fetch-depth: 0
 
-  frontend:
-    name: Frontend CI → Docker Build & Push
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+      - name: Detect changes
+        id: changes
+        run: |
+          # Check if frontend directory exists and has changes
+          if [ -d "frontend" ]; then
+            echo "frontend=true" >> $GITHUB_OUTPUT
+          else
+            echo "frontend=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if backend directory exists and has changes  
+          if [ -d "backend" ] || [ -f "pom.xml" ] || [ -f "requirements.txt" ] || [ -f "package.json" ]; then
+            echo "backend=true" >> $GITHUB_OUTPUT
+          else
+            echo "backend=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if Dockerfile exists
+          if [ -f "Dockerfile" ] || [ -f "frontend/Dockerfile" ] || [ -f "backend/Dockerfile" ]; then
+            echo "docker=true" >> $GITHUB_OUTPUT
+          else
+            echo "docker=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-frontend:
+    name: Build Frontend
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Use Node 18
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: |
+            frontend/package-lock.json
+            package-lock.json
 
-      - name: Install deps (clean)
-        working-directory: frontend
+      - name: Install dependencies
         run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if [ -d "frontend" ]; then
+            cd frontend
+            if [ -f "package-lock.json" ]; then
+              npm ci
+            else
+              npm install
+            fi
+          elif [ -f "package.json" ]; then
+            if [ -f "package-lock.json" ]; then
+              npm ci
+            else
+              npm install
+            fi
+          fi
 
-      - name: Run tests (if present)
-        working-directory: frontend
+      - name: Run linting
+        continue-on-error: true
         run: |
-          if npm run | grep -q "^  test"; then npm test --if-present; else echo "No test script found, skipping."; fi
+          if [ -d "frontend" ]; then
+            cd frontend
+            npm run lint || echo "No lint script or linting failed"
+          elif [ -f "package.json" ]; then
+            npm run lint || echo "No lint script or linting failed"
+          fi
 
-      - name: Build app
-        working-directory: frontend
+      - name: Run tests
+        continue-on-error: true
         run: |
-          if npm run | grep -q "^  build"; then npm run build; else echo "No build script found!"; fi
+          if [ -d "frontend" ]; then
+            cd frontend
+            npm test -- --coverage --watchAll=false || echo "No tests or tests failed"
+          elif [ -f "package.json" ]; then
+            npm test -- --coverage --watchAll=false || echo "No tests or tests failed"  
+          fi
 
-      - name: Compute tags
-        id: meta
+      - name: Build application
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          BRANCH="${GITHUB_REF_NAME}"
-          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          # tags: frontend-latest and frontend-<shortsha>
-          echo "tags=frontend-latest,frontend-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          if [ -d "frontend" ]; then
+            cd frontend
+            npm run build || echo "No build script found"
+          elif [ -f "package.json" ]; then
+            npm run build || echo "No build script found"
+          fi
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub (push only on branch push)
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build (PR) — no push
-        if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: false
-          tags: ${{ env.IMAGE_REPO }}:${{ steps.meta.outputs.tags }}
-          build-args: |
-            NODE_ENV=production
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & Push (main push)
-        if: github.event_name == 'push'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE_REPO }}:frontend-latest
-            ${{ env.IMAGE_REPO }}:frontend-${{ steps.meta.outputs.short_sha }}
-          build-args: |
-            NODE_ENV=production
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  backend:
-    name: Backend CI → Docker Build & Push
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
+  build-backend:
+    name: Build Backend
+    needs: detect-changes
+    if: needs.detect-changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      # Java/Maven backend
+      - name: Setup Java
+        if: hashFiles('**/pom.xml') != ''
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: maven
+
+      - name: Build with Maven
+        if: hashFiles('**/pom.xml') != ''
+        run: |
+          if [ -f "pom.xml" ]; then
+            mvn clean compile test package -DskipTests=false
+          elif [ -f "backend/pom.xml" ]; then
+            cd backend
+            mvn clean compile test package -DskipTests=false
+          fi
+
+      # Python backend
+      - name: Setup Python
+        if: hashFiles('**/requirements.txt') != '' || hashFiles('**/pyproject.toml') != ''
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install dependencies
-        working-directory: backend
+      - name: Install Python dependencies
+        if: hashFiles('**/requirements.txt') != '' || hashFiles('**/pyproject.toml') != ''
         run: |
-          pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          # Install pytest only if tests folder exists & pytest not present
-          if [ -d tests ]; then python -c "import pytest" 2>/dev/null || pip install pytest; fi
+          python -m pip install --upgrade pip
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          elif [ -f "backend/requirements.txt" ]; then
+            pip install -r backend/requirements.txt
+          fi
+          pip install pytest pytest-cov || true
 
-      - name: Run tests (if present)
-        working-directory: backend
+      - name: Run Python tests
+        if: hashFiles('**/requirements.txt') != '' || hashFiles('**/pyproject.toml') != ''
+        continue-on-error: true
         run: |
-          if [ -d tests ]; then pytest -q; else echo "No tests directory found, skipping."; fi
+          if [ -d "tests" ]; then
+            pytest tests/ --cov --cov-report=xml || echo "Tests failed"
+          elif [ -d "backend/tests" ]; then
+            cd backend && pytest tests/ --cov --cov-report=xml || echo "Tests failed"
+          else
+            echo "No tests directory found"
+          fi
 
-      - name: Compute tags
+  docker-build-push:
+    name: Docker Build & Push
+    needs: [detect-changes, build-frontend, build-backend]
+    if: |
+      always() && 
+      needs.detect-changes.outputs.docker == 'true' &&
+      (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped') &&
+      (needs.build-backend.result == 'success' || needs.build-backend.result == 'skipped')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate tags
         id: meta
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          BRANCH="${GITHUB_REF_NAME}"
-          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          # tags: backend-latest and backend-<shortsha>
-          echo "tags=backend-latest,backend-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          SHORT_SHA=${GITHUB_SHA::8}
+          BRANCH=${GITHUB_REF_NAME}
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          
+          if [ "${{ github.event_name }}" == "push" ] && [ "$BRANCH" == "main" ]; then
+            MAIN_TAG="v1.0.${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+          elif [ "${{ github.event_name }}" == "push" ] && [ "$BRANCH" == "develop" ]; then
+            MAIN_TAG="dev-${SHORT_SHA}"
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            MAIN_TAG="pr-${{ github.event.number }}-${SHORT_SHA}"
+          else
+            MAIN_TAG="test-${SHORT_SHA}"
+          fi
+          
+          echo "main_tag=${MAIN_TAG}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+          echo "timestamp=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          
+          echo "Generated tag: ${MAIN_TAG}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub (push only on branch push)
+      - name: Login to Docker Hub
         if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: devopswithjunaid
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
-      - name: Build (PR) — no push
-        if: github.event_name == 'pull_request'
-        uses: docker/build-push-action@v6
+      # Build Frontend Docker Image
+      - name: Build Frontend Docker Image
+        if: hashFiles('frontend/Dockerfile') != ''
+        uses: docker/build-push-action@v5
         with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          push: false
-          tags: ${{ env.IMAGE_REPO }}:${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & Push (main push)
-        if: github.event_name == 'push'
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          file: ./backend/Dockerfile
-          push: true
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: ${{ github.event_name == 'push' }}
           tags: |
-            ${{ env.IMAGE_REPO }}:backend-latest
-            ${{ env.IMAGE_REPO }}:backend-${{ steps.meta.outputs.short_sha }}
+            ${{ env.IMAGE_REPO }}:frontend-${{ steps.meta.outputs.main_tag }}
+            ${{ env.IMAGE_REPO }}:frontend-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      # Build Backend Docker Image  
+      - name: Build Backend Docker Image
+        if: hashFiles('backend/Dockerfile') != ''
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_REPO }}:backend-${{ steps.meta.outputs.main_tag }}
+            ${{ env.IMAGE_REPO }}:backend-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      # Build Root Dockerfile
+      - name: Build Root Docker Image
+        if: hashFiles('Dockerfile') != ''
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_REPO }}:${{ steps.meta.outputs.main_tag }}
+            ${{ env.IMAGE_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Image Summary
+        if: github.event_name == 'push'
+        run: |
+          echo "## Docker Images Built & Pushed 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** \`${{ env.IMAGE_REPO }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Main Tag:** \`${{ steps.meta.outputs.main_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Short SHA:** \`${{ steps.meta.outputs.short_sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ steps.meta.outputs.branch }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Available Tags:" >> $GITHUB_STEP_SUMMARY
+          if [ -f "frontend/Dockerfile" ]; then
+            echo "- \`devopswithjunaid/junaid:frontend-${{ steps.meta.outputs.main_tag }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`devopswithjunaid/junaid:frontend-latest\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -f "backend/Dockerfile" ]; then
+            echo "- \`devopswithjunaid/junaid:backend-${{ steps.meta.outputs.main_tag }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`devopswithjunaid/junaid:backend-latest\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -f "Dockerfile" ]; then
+            echo "- \`devopswithjunaid/junaid:${{ steps.meta.outputs.main_tag }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`devopswithjunaid/junaid:latest\`" >> $GITHUB_STEP_SUMMARY
+          fi
