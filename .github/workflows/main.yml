@@ -9,48 +9,50 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-
+    
     steps:
     # Code checkout
     - name: Check out code
       uses: actions/checkout@v3
-
+    
     # ---- Frontend ----
     - name: Set up Node.js
       uses: actions/setup-node@v3
       with:
         node-version: '16'
-
+    
     - name: Install frontend dependencies
       run: npm install
       working-directory: ./frontend
-
+    
     - name: Run frontend tests
       run: npm test || echo "Skipping frontend tests (no test script found)"
       working-directory: ./frontend
-
+    
     # ---- Backend ----
     - name: Set up Java
       uses: actions/setup-java@v3
       with:
         java-version: '11'
         distribution: 'temurin'
-
+    
     - name: Install backend dependencies
       run: mvn install
-
+      working-directory: ./backend
+    
     - name: Run backend tests
       run: mvn test
-
+      working-directory: ./backend
+    
     # ---- Docker Build & Push ----
     - name: Log in to Docker Hub
       uses: docker/login-action@v2
       with:
         username: ${{ secrets.DOCKER_HUB_USERNAME }}
         password: ${{ secrets.DOCKER_HUB_TOKEN }}
-
+    
     - name: Build Docker image
       run: docker build -t ${{ secrets.DOCKER_HUB_USERNAME }}/kubetask:latest .
-
+    
     - name: Push Docker image
       run: docker push ${{ secrets.DOCKER_HUB_USERNAME }}/kubetask:latest
