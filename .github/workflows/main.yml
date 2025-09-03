@@ -37,11 +37,11 @@ jobs:
         distribution: 'temurin'
 
     - name: Install backend dependencies
-      run: ./mvnw install
+      run: mvn install
       working-directory: ./backend
 
     - name: Run backend tests
-      run: ./mvnw test
+      run: mvn test
       working-directory: ./backend
 
     # ---- Docker Build & Push ----
