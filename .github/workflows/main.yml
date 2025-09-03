@@ -269,7 +269,7 @@ jobs:
       - name: Image Summary
         if: github.event_name == 'push'
         run: |
-          echo "## Docker Images Built & Pushed 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "## Docker Images Built & Pushed " >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Repository:** \`${{ env.IMAGE_REPO }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Main Tag:** \`${{ steps.meta.outputs.main_tag }}\`" >> $GITHUB_STEP_SUMMARY
