@@ -38,11 +38,9 @@ jobs:
 
     - name: Install backend dependencies
       run: mvn install
-      working-directory: ./backend
 
     - name: Run backend tests
       run: mvn test
-      working-directory: ./backend
 
     # ---- Docker Build & Push ----
     - name: Log in to Docker Hub
