@@ -218,7 +218,6 @@ jobs:
         if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
           username: devopswithjunaid
           password: ${{ secrets.DOCKER_HUB_TOKEN }}
 
